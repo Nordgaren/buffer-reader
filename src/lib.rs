@@ -14,7 +14,7 @@ impl<'a> BufferReader<'a> {
         }
     }
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
-    /// advances the stream by the size of `T`. Function will fail if the length of the underlying
+    /// advances the slice by the size of `T`. Function will fail if the length of the underlying
     /// slice is less than the size of `T`.
     pub fn read_t<T>(&self) -> std::io::Result<&'a T> {
         let size = std::mem::size_of::<T>();
