@@ -37,7 +37,7 @@ impl<'a> BufferReader<'a> {
     }
     /// # Safety
     ///
-    /// Caller should call `self.check_len(size)` before calling this to check if there is room in the
+    /// Caller should call `self.check_available(size)` before calling this to check if there is room in the
     /// buffer to advance.
     #[inline(always)]
     fn advance(&self, size: usize) -> &'a [u8] {
