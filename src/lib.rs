@@ -33,14 +33,14 @@ impl<'a> BufferReader<'a> {
     /// and returns a slice from the previous start of the buffer to the new start of the buffer.
     fn check_and_advance(&self, size: usize) -> std::io::Result<&'a [u8]> {
         self.check_available(size)?;
-        Ok(unsafe { self.advance(size) })
+        Ok(self.advance(size))
     }
     /// # Safety
     ///
     /// Caller should call `self.check_len(size)` before calling this to check if there is room in the
     /// buffer to advance.
     #[inline(always)]
-    unsafe fn advance(&self, size: usize) -> &'a [u8] {
+    fn advance(&self, size: usize) -> &'a [u8] {
         let buffer = self.buffer.get();
         self.buffer.set(&buffer[size..]);
         &buffer[..size]
