@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::io::{Error, ErrorKind};
 
+/// A structure used for getting references to C structures in a contiguous buffer of memory.
 pub struct BufferReader<'a> {
     buffer: Cell<&'a [u8]>,
 }
