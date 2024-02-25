@@ -68,6 +68,7 @@ mod tests {
         let hello = std::str::from_utf8(br.read_bytes(5).unwrap()).unwrap();
         let world = std::str::from_utf8(br.get_remaining()).unwrap();
 
-        println!("hello: {hello} world: {world}");
+        assert_eq!(hello, "Hello");
+        assert_eq!(world, ", World!");
     }
 }
