@@ -6,39 +6,47 @@ pub struct BufferReader<'a> {
 }
 
 impl<'a> BufferReader<'a> {
-    pub fn new(buffer: &'a [u8]) -> Self {
+    /// Returns a new `BufferReader<'a>` for the provided slice.
+    pub fn new(slice: &'a [u8]) -> Self {
         BufferReader {
-            buffer: Cell::new(buffer),
+            buffer: Cell::new(slice),
         }
     }
-}
-
-impl BufferReader<'_> {
-    pub fn read_t<T>(&self) -> std::io::Result<&T> {
+    /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
+    /// advances the stream by the size of `T`. Function will fail if the length of the underlying
+    /// slice is less than the size of `T`.
+    pub fn read_t<T>(&self) -> std::io::Result<&'a T> {
         let size = std::mem::size_of::<T>();
-        self.check_available(size)?;
-        let t = unsafe { &*(self.buffer.get().as_ptr() as *const T) };
-        unsafe { self.advance(size) };
-        Ok(t)
+        let slice = self.check_and_advance(size)?;
+        Ok(unsafe { &*(slice.as_ptr() as *const T) })
     }
-    pub fn read_bytes(&self, len: usize) -> std::io::Result<&[u8]> {
-        self.check_available(len)?;
-        let bytes = &self.buffer.get()[..len];
-        unsafe { self.advance(len) };
-        Ok(bytes)
+    /// Returns a reference to the next `n` bytes specified by the size parameter. Function will fail
+    /// if the length of the underlying slice is less than the size provided.
+    pub fn read_bytes(&self, size: usize) -> std::io::Result<&'a [u8]> {
+        self.check_and_advance(size)
     }
-    pub fn get_remaining(&self) -> &[u8] {
+    /// Returns a reference to the remaining bytes in the slice.
+    pub fn get_remaining(self) -> &'a [u8] {
         self.buffer.get()
+    }
+    /// Checks that there are enough bytes left in the slice to advance the start of the slice position,
+    /// and returns a slice from the previous start of the buffer to the new start of the buffer.
+    fn check_and_advance(&self, size: usize) -> std::io::Result<&'a [u8]> {
+        self.check_available(size)?;
+        let slice = self.buffer.get();
+        unsafe { self.advance(size) }
+        Ok(&slice[..size])
     }
     /// # Safety
     ///
     /// Caller should call `self.check_len(size)` before calling this to check if there is room in the
     /// buffer to advance.
-    unsafe fn advance(&self, count: usize) {
-        self.buffer.set(&self.buffer.get()[count..]);
+    #[inline(always)]
+    unsafe fn advance(&self, size: usize) {
+        self.buffer.set(&self.buffer.get()[size..]);
     }
-    fn check_available(&self, len: usize) -> std::io::Result<()> {
-        if len > self.buffer.get().len() {
+    fn check_available(&self, size: usize) -> std::io::Result<()> {
+        if size > self.buffer.get().len() {
             return Err(Error::new(
                 ErrorKind::UnexpectedEof,
                 "BufferReader advance would result in an index that is out of bounds",
