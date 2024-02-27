@@ -24,6 +24,12 @@ impl<'a> BufferReader<'a> {
         // caller should do additional verification that the reference to T that is passed back is valid.
         Ok(unsafe { &*(slice.as_ptr() as *const T) })
     }
+    // @TODO: Make this suck less
+    /// Returns the value next byte. Function will fail if the length of the underlying slice is less
+    /// than 1.
+    pub fn read_byte(&self) -> std::io::Result<u8> {
+        Ok(self.check_and_advance(1)?[0])
+    }
     /// Returns a reference to the next `n` bytes specified by the `len` parameter. Function will fail
     /// if the length of the underlying slice is less than the size provided.
     pub fn read_bytes(&self, len: usize) -> std::io::Result<&'a [u8]> {
