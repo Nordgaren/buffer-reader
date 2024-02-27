@@ -36,7 +36,7 @@ impl<'a> BufferReader<'a> {
         self.check_and_advance(len)
     }
     /// Returns the length of the remaining buffer.
-    pub fn len(self) -> usize {
+    pub fn len(&self) -> usize {
         self.buffer.get().len()
     }
     /// Returns a reference to the remaining bytes in the slice.
