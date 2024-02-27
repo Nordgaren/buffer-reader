@@ -35,6 +35,10 @@ impl<'a> BufferReader<'a> {
     pub fn read_bytes(&self, len: usize) -> std::io::Result<&'a [u8]> {
         self.check_and_advance(len)
     }
+    /// Returns the length of the remaining buffer.
+    pub fn len(self) -> usize {
+        self.buffer.get().len()
+    }
     /// Returns a reference to the remaining bytes in the slice.
     pub fn get_remaining(self) -> &'a [u8] {
         self.buffer.get()
