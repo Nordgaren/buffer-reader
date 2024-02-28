@@ -18,7 +18,21 @@ impl<'a> BufferReader<'a> {
     /// slice is less than the size of `T`.
     pub fn read_t<T>(&self) -> std::io::Result<&'a T> {
         let size = std::mem::size_of::<T>();
-        let slice = self.check_and_advance(size)?;
+        self.check_available(size)?;
+        let slice = self.advance(size);
+        // SAFETY: We know that the buffer passed back from `self.check_and_advance(size)?` is the size
+        // of T, so we will assume that it's a valid T. I might make this function unsafe, because the
+        // caller should do additional verification that the reference to T that is passed back is valid.
+        Ok(unsafe { &*(slice.as_ptr() as *const T) })
+    }
+    /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
+    /// advances the slice by the size of `T` in bytes. Function will fail if the length of the underlying
+    /// slice is less than the size of `T`.
+    pub fn peek_t<T>(&self, start: usize) -> std::io::Result<&'a T> {
+        let len = std::mem::size_of::<T>();
+        let end = start + len;
+        self.check_available(end)?;
+        let slice = &self.peek_remaining()[start..end];
         // SAFETY: We know that the buffer passed back from `self.check_and_advance(size)?` is the size
         // of T, so we will assume that it's a valid T. I might make this function unsafe, because the
         // caller should do additional verification that the reference to T that is passed back is valid.
@@ -32,10 +46,25 @@ impl<'a> BufferReader<'a> {
         // byte in the slice.
         Ok(self.advance(std::mem::size_of::<u8>())[0])
     }
+    /// Returns the value next byte. Function will fail if the length of the underlying slice is less
+    /// than 1.
+    pub fn peek_byte(&self, pos: usize) -> std::io::Result<u8> {
+        self.check_available(std::mem::size_of::<u8>())?;
+        // SAFETY: advance returns a slice with the number of bytes we read, so, we return the only
+        // byte in the slice.
+        Ok(self.peek_remaining()[pos])
+    }
     /// Returns a reference to the next `n` bytes specified by the `len` parameter. Function will fail
     /// if the length of the underlying slice is less than the size provided.
     pub fn read_bytes(&self, len: usize) -> std::io::Result<&'a [u8]> {
         self.check_and_advance(len)
+    }
+    /// Returns a reference to the next `n` bytes specified by the `len` parameter. Function will fail
+    /// if the length of the underlying slice is less than the size provided.
+    pub fn peek_bytes(&self, start: usize, len: usize) -> std::io::Result<&'a [u8]> {
+        let end = start + len;
+        self.check_available(end)?;
+        Ok(&self.peek_remaining()[start..end])
     }
     /// Returns the length of the remaining buffer.
     pub fn len(&self) -> usize {
@@ -46,6 +75,12 @@ impl<'a> BufferReader<'a> {
         self.buffer.get().is_empty()
     }
     /// Returns a reference to the remaining bytes in the slice.
+    #[inline(always)]
+    pub fn peek_remaining(&self) -> &'a [u8] {
+        self.buffer.get()
+    }
+    /// Returns a reference to the remaining bytes in the slice.
+    #[inline(always)]
     pub fn get_remaining(self) -> &'a [u8] {
         self.buffer.get()
     }
@@ -112,12 +147,32 @@ mod tests {
     }
 
     #[test]
+    fn peek() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let len = br.len();
+        let hello = std::str::from_utf8(br.peek_bytes(5, 2).unwrap()).unwrap();
+
+        assert_eq!(len, br.len());
+        assert_eq!(hello, ", ");
+    }
+
+    #[test]
     fn read_byte() {
         let hello_world = b"Hello, World!";
         let br = BufferReader::new(hello_world);
         let first_byte = br.read_byte().unwrap();
 
         assert_eq!(first_byte, b'H');
+    }
+
+    #[test]
+    fn peek_byte() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let seventh_byte = br.peek_byte(7).unwrap();
+
+        assert_eq!(seventh_byte, b'W');
     }
 
 
