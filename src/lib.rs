@@ -49,6 +49,21 @@ impl<'a> BufferReader<'a> {
         self.check_available(len)?;
         Ok(self.advance(len))
     }
+    pub fn find_bytes(&self, pat: &[u8]) -> Option<usize> {
+        let buffer = self.buffer.get();
+        let pat_len = pat.len();
+        let mut i = 0;
+
+        while i < buffer.len() - (pat_len - 1) {
+            if &buffer[i..pat_len + i] == pat {
+                return Some(i);
+            }
+
+            i += 1;
+        }
+
+        None
+    }
     /// Advance the start of the buffer by the number of bytes provided by `len`. Returns a slice from
     /// the previous start of the buffer up until the new start of the buffer.
     ///
@@ -88,5 +103,31 @@ mod tests {
 
         assert_eq!(hello, "Hello");
         assert_eq!(world, ", World!");
+    }
+
+    #[test]
+    fn find() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let hello = br.find_bytes(b"o,").expect("Could not find pattern");
+
+        assert_eq!(hello, 4);
+    }
+
+    #[test]
+    fn find_end() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let hello = br.find_bytes(b"d!").expect("Could not find pattern");
+
+        assert_eq!(hello, 11);
+    }
+
+    #[test]
+    #[should_panic]
+    fn find_end_panic() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let hello = br.find_bytes(b"! ").expect("Could not find pattern");
     }
 }
