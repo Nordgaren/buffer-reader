@@ -24,11 +24,13 @@ impl<'a> BufferReader<'a> {
         // caller should do additional verification that the reference to T that is passed back is valid.
         Ok(unsafe { &*(slice.as_ptr() as *const T) })
     }
-    // @TODO: Make this suck less
     /// Returns the value next byte. Function will fail if the length of the underlying slice is less
     /// than 1.
     pub fn read_byte(&self) -> std::io::Result<u8> {
-        Ok(self.check_and_advance(1)?[0])
+        self.check_available(std::mem::size_of::<u8>())?;
+        // SAFETY: advance returns a slice with the number of bytes we read, so, we return the only
+        // byte in the slice.
+        Ok(self.advance(std::mem::size_of::<u8>())[0])
     }
     /// Returns a reference to the next `n` bytes specified by the `len` parameter. Function will fail
     /// if the length of the underlying slice is less than the size provided.
@@ -38,6 +40,10 @@ impl<'a> BufferReader<'a> {
     /// Returns the length of the remaining buffer.
     pub fn len(&self) -> usize {
         self.buffer.get().len()
+    }
+    /// Returns the length of the remaining buffer.
+    pub fn is_empty(&self) -> bool {
+        self.buffer.get().is_empty()
     }
     /// Returns a reference to the remaining bytes in the slice.
     pub fn get_remaining(self) -> &'a [u8] {
@@ -106,6 +112,16 @@ mod tests {
     }
 
     #[test]
+    fn read_byte() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let first_byte = br.read_byte().unwrap();
+
+        assert_eq!(first_byte, b'H');
+    }
+
+
+    #[test]
     fn find() {
         let hello_world = b"Hello, World!";
         let br = BufferReader::new(hello_world);
@@ -128,6 +144,6 @@ mod tests {
     fn find_end_panic() {
         let hello_world = b"Hello, World!";
         let br = BufferReader::new(hello_world);
-        let hello = br.find_bytes(b"! ").expect("Could not find pattern");
+        let _ = br.find_bytes(b"! ").expect("Could not find pattern");
     }
 }
