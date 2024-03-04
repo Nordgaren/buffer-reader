@@ -1,25 +1,10 @@
 use std::cell::Cell;
 use std::io::{Error, ErrorKind, Read};
+use bytemuck::AnyBitPattern;
 
 /// A structure used for getting references to C structures in a contiguous buffer of memory.
 pub struct BufferReader<'a> {
     buffer: Cell<&'a [u8]>,
-}
-
-impl Read for BufferReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self.check_available(buf.len()) {
-            Ok(_) => {
-                buf.copy_from_slice(self.advance(buf.len()));
-                Ok(buf.len())
-            }
-            Err(_) => {
-                let buffer = self.buffer.get();
-                buf.copy_from_slice(buffer);
-                Ok(buffer.len())
-            }
-        }
-    }
 }
 
 impl<'a> BufferReader<'a> {
@@ -32,26 +17,25 @@ impl<'a> BufferReader<'a> {
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
     /// advances the slice by the size of `T` in bytes. Function will fail if the length of the underlying
     /// slice is less than the size of `T`.
-    pub fn read_t<T>(&self) -> std::io::Result<&'a T> {
+    pub fn read_t<T: AnyBitPattern>(&self) -> std::io::Result<&'a T> {
         let size = std::mem::size_of::<T>();
         self.check_available(size)?;
         let slice = self.advance(size);
         // SAFETY: We know that the buffer passed back from `self.check_and_advance(size)?` is the size
         // of T, so we will assume that it's a valid T. I might make this function unsafe, because the
         // caller should do additional verification that the reference to T that is passed back is valid.
-        Ok(unsafe { &*(slice.as_ptr() as *const T) })
+        bytemuck::try_from_bytes(slice).map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
     }
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`, Where n is the
     /// size of `T`. Function will fail if there are not enough bytes left in the buffer.
-    pub fn peek_t<T>(&self, start: usize) -> std::io::Result<&'a T> {
-        let len = std::mem::size_of::<T>();
-        let end = start + len;
+    pub fn peek_t<T: AnyBitPattern>(&self, start: usize) -> std::io::Result<&'a T> {
+        let end = start + std::mem::size_of::<T>();
         self.check_available(end)?;
         let slice = &self.peek_remaining()[start..end];
         // SAFETY: We know that the buffer passed back from `self.check_and_advance(size)?` is the size
         // of T, so we will assume that it's a valid T. I might make this function unsafe, because the
         // caller should do additional verification that the reference to T that is passed back is valid.
-        Ok(unsafe { &*(slice.as_ptr() as *const T) })
+        bytemuck::try_from_bytes(slice).map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
     }
     /// Returns the value next byte and advances the slice by one. Function will fail if the length
     /// of the underlying slice is less than 1.
@@ -106,6 +90,7 @@ impl<'a> BufferReader<'a> {
         self.check_available(len)?;
         Ok(self.advance(len))
     }
+    /// Returns the position of the pattern of bytes provided, or `None` if the pattern is not found.
     pub fn find_bytes(&self, pat: &[u8]) -> Option<usize> {
         let buffer = self.buffer.get();
         let pat_len = pat.len();
@@ -147,6 +132,104 @@ impl<'a> BufferReader<'a> {
     }
 }
 
+impl Read for BufferReader<'_> {
+    /// # Warning - will copy bytes to provided buffer
+    ///
+    /// Pull some bytes from this source into the specified buffer, returning
+    /// how many bytes were read.
+    ///
+    /// This function does not provide any guarantees about whether it blocks
+    /// waiting for data, but if an object needs to block for a read and cannot,
+    /// it will typically signal this via an [`Err`] return value.
+    ///
+    /// If the return value of this method is [`Ok(n)`], then implementations must
+    /// guarantee that `0 <= n <= buf.len()`. A nonzero `n` value indicates
+    /// that the buffer `buf` has been filled in with `n` bytes of data from this
+    /// source. If `n` is `0`, then it can indicate one of two scenarios:
+    ///
+    /// 1. This reader has reached its "end of file" and will likely no longer
+    ///    be able to produce bytes. Note that this does not mean that the
+    ///    reader will *always* no longer be able to produce bytes. As an example,
+    ///    on Linux, this method will call the `recv` syscall for a [`TcpStream`],
+    ///    where returning zero indicates the connection was shut down correctly. While
+    ///    for [`File`], it is possible to reach the end of file and get zero as result,
+    ///    but if more data is appended to the file, future calls to `read` will return
+    ///    more data.
+    /// 2. The buffer specified was 0 bytes in length.
+    ///
+    /// It is not an error if the returned value `n` is smaller than the buffer size,
+    /// even when the reader is not at the end of the stream yet.
+    /// This may happen for example because fewer bytes are actually available right now
+    /// (e. g. being close to end-of-file) or because read() was interrupted by a signal.
+    ///
+    /// As this trait is safe to implement, callers in unsafe code cannot rely on
+    /// `n <= buf.len()` for safety.
+    /// Extra care needs to be taken when `unsafe` functions are used to access the read bytes.
+    /// Callers have to ensure that no unchecked out-of-bounds accesses are possible even if
+    /// `n > buf.len()`.
+    ///
+    /// No guarantees are provided about the contents of `buf` when this
+    /// function is called, so implementations cannot rely on any property of the
+    /// contents of `buf` being true. It is recommended that *implementations*
+    /// only write data to `buf` instead of reading its contents.
+    ///
+    /// Correspondingly, however, *callers* of this method in unsafe code must not assume
+    /// any guarantees about how the implementation uses `buf`. The trait is safe to implement,
+    /// so it is possible that the code that's supposed to write to the buffer might also read
+    /// from it. It is your responsibility to make sure that `buf` is initialized
+    /// before calling `read`. Calling `read` with an uninitialized `buf` (of the kind one
+    /// obtains via [`MaybeUninit<T>`]) is not safe, and can lead to undefined behavior.
+    ///
+    /// [`MaybeUninit<T>`]: crate::mem::MaybeUninit
+    ///
+    /// # Errors
+    ///
+    /// If this function encounters any form of I/O or other error, an error
+    /// variant will be returned. If an error is returned then it must be
+    /// guaranteed that no bytes were read.
+    ///
+    /// An error of the [`ErrorKind::Interrupted`] kind is non-fatal and the read
+    /// operation should be retried if there is nothing else to do.
+    ///
+    /// # Examples
+    ///
+    /// [`File`]s implement `Read`:
+    ///
+    /// [`Ok(n)`]: Ok
+    /// [`File`]: crate::fs::File
+    /// [`TcpStream`]: crate::net::TcpStream
+    ///
+    /// ```no_run
+    /// use std::io;
+    /// use std::io::prelude::*;
+    /// use std::fs::File;
+    ///
+    /// fn main() -> io::Result<()> {
+    ///     let mut f = File::open("foo.txt")?;
+    ///     let mut buffer = [0; 10];
+    ///
+    ///     // read up to 10 bytes
+    ///     let n = f.read(&mut buffer[..])?;
+    ///
+    ///     println!("The bytes: {:?}", &buffer[..n]);
+    ///     Ok(())
+    /// }
+    /// ```
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.check_available(buf.len()) {
+            Ok(_) => {
+                buf.copy_from_slice(self.advance(buf.len()));
+                Ok(buf.len())
+            }
+            Err(_) => {
+                let len = self.len();
+                buf[..len].copy_from_slice(self.advance(len));
+                Ok(len)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,12 +258,13 @@ mod tests {
 
     /// A test type to make sure read_t and peek_t work.
     #[repr(C, packed(1))]
+    #[derive(Copy, Clone, AnyBitPattern)]
     struct TestT {
         int_one: u32,
         byte: u8,
     }
 
-    pub const TEST_T_SIZE: usize = 0x5;
+    const TEST_T_SIZE: usize = 0x5;
     const _: () = assert!(std::mem::size_of::<TestT>() == TEST_T_SIZE);
 
     #[test]
@@ -197,14 +281,12 @@ mod tests {
     fn peek_t() {
         let hello_world = b"Hello, World!";
         let br = BufferReader::new(hello_world);
-        let len = br.len();
         let test_t = br.peek_t::<TestT>(7).unwrap();
 
         let int = test_t.int_one;
         assert_eq!(int, u32::from_le_bytes(*b"Worl"));
         assert_eq!(test_t.byte, b'd');
     }
-
 
     #[test]
     fn read_byte() {
@@ -223,7 +305,6 @@ mod tests {
 
         assert_eq!(seventh_byte, b'W');
     }
-
 
     #[test]
     fn find() {
