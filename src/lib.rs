@@ -1,9 +1,25 @@
 use std::cell::Cell;
-use std::io::{Error, ErrorKind};
+use std::io::{Error, ErrorKind, Read};
 
 /// A structure used for getting references to C structures in a contiguous buffer of memory.
 pub struct BufferReader<'a> {
     buffer: Cell<&'a [u8]>,
+}
+
+impl Read for BufferReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.check_available(buf.len()) {
+            Ok(_) => {
+                buf.copy_from_slice(self.advance(buf.len()));
+                Ok(buf.len())
+            }
+            Err(_) => {
+                let buffer = self.buffer.get();
+                buf.copy_from_slice(buffer);
+                Ok(buffer.len())
+            }
+        }
+    }
 }
 
 impl<'a> BufferReader<'a> {
@@ -25,9 +41,8 @@ impl<'a> BufferReader<'a> {
         // caller should do additional verification that the reference to T that is passed back is valid.
         Ok(unsafe { &*(slice.as_ptr() as *const T) })
     }
-    /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
-    /// advances the slice by the size of `T` in bytes. Function will fail if the length of the underlying
-    /// slice is less than the size of `T`.
+    /// Returns a reference to the next `n` bytes in the slice as a reference to `T`, Where n is the
+    /// size of `T`. Function will fail if there are not enough bytes left in the buffer.
     pub fn peek_t<T>(&self, start: usize) -> std::io::Result<&'a T> {
         let len = std::mem::size_of::<T>();
         let end = start + len;
@@ -38,8 +53,8 @@ impl<'a> BufferReader<'a> {
         // caller should do additional verification that the reference to T that is passed back is valid.
         Ok(unsafe { &*(slice.as_ptr() as *const T) })
     }
-    /// Returns the value next byte. Function will fail if the length of the underlying slice is less
-    /// than 1.
+    /// Returns the value next byte and advances the slice by one. Function will fail if the length
+    /// of the underlying slice is less than 1.
     pub fn read_byte(&self) -> std::io::Result<u8> {
         self.check_available(std::mem::size_of::<u8>())?;
         // SAFETY: advance returns a slice with the number of bytes we read, so, we return the only
@@ -54,8 +69,9 @@ impl<'a> BufferReader<'a> {
         // byte in the slice.
         Ok(self.peek_remaining()[pos])
     }
-    /// Returns a reference to the next `n` bytes specified by the `len` parameter. Function will fail
-    /// if the length of the underlying slice is less than the size provided.
+    /// Returns a reference to the next `n` bytes specified by the `len` parameter and advances the
+    /// underlying slice by `len`. Function will fail if the length of the underlying slice is less
+    /// than the size provided.
     pub fn read_bytes(&self, len: usize) -> std::io::Result<&'a [u8]> {
         self.check_and_advance(len)
     }
@@ -110,8 +126,8 @@ impl<'a> BufferReader<'a> {
     ///
     /// # Safety
     ///
-    /// Caller should call `self.check_available(size)` before calling this to check if there is room in the
-    /// buffer to advance.
+    /// Caller should call `self.check_available(size)` before calling this to check if there is room
+    /// in the buffer to advance.
     #[inline(always)]
     fn advance(&self, len: usize) -> &'a [u8] {
         let buffer = self.buffer.get();
@@ -156,6 +172,39 @@ mod tests {
         assert_eq!(len, br.len());
         assert_eq!(hello, ", ");
     }
+
+    /// A test type to make sure read_t and peek_t work.
+    #[repr(C, packed(1))]
+    struct TestT {
+        int_one: u32,
+        byte: u8,
+    }
+
+    pub const TEST_T_SIZE: usize = 0x5;
+    const _: () = assert!(std::mem::size_of::<TestT>() == TEST_T_SIZE);
+
+    #[test]
+    fn read_t() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let test_t = br.read_t::<TestT>().unwrap();
+        let int = test_t.int_one;
+        assert_eq!(int, u32::from_le_bytes(*b"Hell"));
+        assert_eq!(test_t.byte, b'o');
+    }
+
+    #[test]
+    fn peek_t() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let len = br.len();
+        let test_t = br.peek_t::<TestT>(7).unwrap();
+
+        let int = test_t.int_one;
+        assert_eq!(int, u32::from_le_bytes(*b"Worl"));
+        assert_eq!(test_t.byte, b'd');
+    }
+
 
     #[test]
     fn read_byte() {
