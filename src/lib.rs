@@ -21,10 +21,10 @@ impl<'a> BufferReader<'a> {
         let size = std::mem::size_of::<T>();
         self.check_available(size)?;
         let slice = self.advance(size);
-        // SAFETY: We know that the buffer passed back from `self.check_and_advance(size)?` is the size
-        // of T, so we will assume that it's a valid T. I might make this function unsafe, because the
-        // caller should do additional verification that the reference to T that is passed back is valid.
-        bytemuck::try_from_bytes(slice).map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
+        // SAFETY: We know that the buffer passed back from `self.advance(size)?` is the size of T,
+        // so we will assume that it's a valid T. This function is now considered safe, since we are
+        // now requiring bytemuck and the `AnyBitPattern` trait.
+        Ok(unsafe { &*(slice.as_ptr() as *const T) })
     }
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`, Where n is the
     /// size of `T`. Function will fail if there are not enough bytes left in the buffer.
@@ -32,10 +32,27 @@ impl<'a> BufferReader<'a> {
         let end = start + std::mem::size_of::<T>();
         self.check_available(end)?;
         let slice = &self.peek_remaining()[start..end];
-        // SAFETY: We know that the buffer passed back from `self.check_and_advance(size)?` is the size
-        // of T, so we will assume that it's a valid T. I might make this function unsafe, because the
-        // caller should do additional verification that the reference to T that is passed back is valid.
-        bytemuck::try_from_bytes(slice).map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
+        // SAFETY: See read_t
+        Ok(unsafe { &*(slice.as_ptr() as *const T) })
+    }
+    /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
+    /// advances the slice by the size of `T` * `len` in bytes. Function will fail if the length of
+    /// the underlying slice is less than the size of `T`.
+    pub fn read_slice_t<T: AnyBitPattern>(&self, len: usize) -> std::io::Result<&'a [T]> {
+        let size = len * std::mem::size_of::<T>();
+        self.check_available(size)?;
+        let slice = self.advance(size);
+        // SAFETY: See read_t
+        Ok(unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const T, len) })
+    }
+    /// Returns a reference to the next `n` bytes in the slice as a reference to `T`, Where `n` is the
+    /// size of `T` * `len`. Function will fail if there are not enough bytes left in the buffer.
+    pub fn peek_slice_t<T: AnyBitPattern>(&self, start: usize, len: usize) -> std::io::Result<&'a [T]> {
+        let end = start + (std::mem::size_of::<T>() * len);
+        self.check_available(end)?;
+        let slice = &self.peek_remaining()[start..end];
+        // SAFETY: See read_t
+        Ok(unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const T, len) })
     }
     /// Returns the value next byte and advances the slice by one. Function will fail if the length
     /// of the underlying slice is less than 1.
@@ -49,8 +66,7 @@ impl<'a> BufferReader<'a> {
     /// than 1.
     pub fn peek_byte(&self, pos: usize) -> std::io::Result<u8> {
         self.check_available(std::mem::size_of::<u8>())?;
-        // SAFETY: advance returns a slice with the number of bytes we read, so, we return the only
-        // byte in the slice.
+        // SAFETY: see read_byte
         Ok(self.peek_remaining()[pos])
     }
     /// Returns a reference to the next `n` bytes specified by the `len` parameter and advances the
@@ -58,6 +74,8 @@ impl<'a> BufferReader<'a> {
     /// than the size provided.
     pub fn read_bytes(&self, len: usize) -> std::io::Result<&'a [u8]> {
         self.check_and_advance(len)
+        self.check_available(len)?;
+        Ok(self.advance(len))
     }
     /// Returns a reference to the next `n` bytes specified by the `len` parameter. Function will fail
     /// if the length of the underlying slice is less than the size provided.
@@ -83,12 +101,6 @@ impl<'a> BufferReader<'a> {
     #[inline(always)]
     pub fn get_remaining(self) -> &'a [u8] {
         self.buffer.get()
-    }
-    /// Checks that there are enough bytes left in the slice to advance the start of the slice position,
-    /// and returns a slice from the previous start of the buffer to the new start of the buffer.
-    fn check_and_advance(&self, len: usize) -> std::io::Result<&'a [u8]> {
-        self.check_available(len)?;
-        Ok(self.advance(len))
     }
     /// Returns the position of the pattern of bytes provided, or `None` if the pattern is not found.
     pub fn find_bytes(&self, pat: &[u8]) -> Option<usize> {
@@ -131,7 +143,7 @@ impl<'a> BufferReader<'a> {
         Ok(())
     }
 }
-
+#[cfg(feature = "read")]
 impl Read for BufferReader<'_> {
     /// # Warning - will copy bytes to provided buffer
     ///
@@ -235,18 +247,41 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "read")]
     fn read() {
         let hello_world = b"Hello, World!";
-        let br = BufferReader::new(hello_world);
-        let hello = std::str::from_utf8(br.read_bytes(5).unwrap()).unwrap();
-        let world = std::str::from_utf8(br.get_remaining()).unwrap();
+        let mut br = BufferReader::new(hello_world);
 
-        assert_eq!(hello, "Hello");
-        assert_eq!(world, ", World!");
+        let mut hello = [0; 5];
+        let read = br.read(&mut hello[..]).unwrap();
+        assert_eq!(read, 5);
+        assert_eq!(&hello[..], b"Hello");
+
+        let mut world = [0; 8];
+        let read = br.read(&mut world[..]).unwrap();
+        assert_eq!(read, 8);
+        assert_eq!(&world[..], b", World!");
+
+        // Check that the binary reader advanced through the entire buffer.
+        assert_eq!(br.len(), 0);
     }
 
     #[test]
-    fn peek() {
+    fn read_bytes() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+
+        let hello = br.read_bytes(5).unwrap();
+        assert_eq!(&hello[..], b"Hello");
+
+        // Check that the binary reader advanced through the "Hello".
+        assert_eq!(br.len(), b", World!".len());
+        let world = br.get_remaining();
+        assert_eq!(&world[..], b", World!");
+    }
+
+    #[test]
+    fn peek_bytes() {
         let hello_world = b"Hello, World!";
         let br = BufferReader::new(hello_world);
         let len = br.len();
@@ -264,7 +299,7 @@ mod tests {
         byte: u8,
     }
 
-    const TEST_T_SIZE: usize = 0x5;
+    const TEST_T_SIZE: usize = std::mem::size_of::<u32>() + std::mem::size_of::<u8>();
     const _: () = assert!(std::mem::size_of::<TestT>() == TEST_T_SIZE);
 
     #[test]

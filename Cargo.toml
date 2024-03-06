@@ -11,4 +11,6 @@ bytemuck = "1.14.3"
 [dev-dependencies]
 bytemuck = { version = "1.14.3", features = ["derive"] }
 
+[features]
+read = []
 
