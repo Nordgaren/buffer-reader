@@ -73,7 +73,6 @@ impl<'a> BufferReader<'a> {
     /// underlying slice by `len`. Function will fail if the length of the underlying slice is less
     /// than the size provided.
     pub fn read_bytes(&self, len: usize) -> std::io::Result<&'a [u8]> {
-        self.check_and_advance(len)
         self.check_available(len)?;
         Ok(self.advance(len))
     }
