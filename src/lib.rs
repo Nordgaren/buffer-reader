@@ -1,23 +1,22 @@
-use std::cell::Cell;
-use std::io::{Error, ErrorKind, Read};
+use std::io::{Error, ErrorKind};
 use bytemuck::AnyBitPattern;
 
 /// A structure used for getting references to C structures in a contiguous buffer of memory.
 pub struct BufferReader<'a> {
-    buffer: Cell<&'a [u8]>,
+    buffer: &'a [u8],
 }
 
 impl<'a> BufferReader<'a> {
     /// Returns a new `BufferReader<'a>` for the provided slice.
     pub fn new(slice: &'a [u8]) -> Self {
         BufferReader {
-            buffer: Cell::new(slice),
+            buffer: slice,
         }
     }
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
     /// advances the slice by the size of `T` in bytes. Function will fail if the length of the underlying
     /// slice is less than the size of `T`.
-    pub fn read_t<T: AnyBitPattern>(&self) -> std::io::Result<&'a T> {
+    pub fn read_t<T: AnyBitPattern>(&mut self) -> std::io::Result<&'a T> {
         let size = std::mem::size_of::<T>();
         self.check_available(size)?;
         let slice = self.advance(size);
@@ -38,7 +37,7 @@ impl<'a> BufferReader<'a> {
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
     /// advances the slice by the size of `T` * `len` in bytes. Function will fail if the length of
     /// the underlying slice is less than the size of `T`.
-    pub fn read_slice_t<T: AnyBitPattern>(&self, len: usize) -> std::io::Result<&'a [T]> {
+    pub fn read_slice_t<T: AnyBitPattern>(&mut self, len: usize) -> std::io::Result<&'a [T]> {
         let size = len * std::mem::size_of::<T>();
         self.check_available(size)?;
         let slice = self.advance(size);
@@ -56,7 +55,7 @@ impl<'a> BufferReader<'a> {
     }
     /// Returns the value next byte and advances the slice by one. Function will fail if the length
     /// of the underlying slice is less than 1.
-    pub fn read_byte(&self) -> std::io::Result<u8> {
+    pub fn read_byte(&mut self) -> std::io::Result<u8> {
         self.check_available(std::mem::size_of::<u8>())?;
         // SAFETY: advance returns a slice with the number of bytes we read, so, we return the only
         // byte in the slice.
@@ -72,7 +71,7 @@ impl<'a> BufferReader<'a> {
     /// Returns a reference to the next `n` bytes specified by the `len` parameter and advances the
     /// underlying slice by `len`. Function will fail if the length of the underlying slice is less
     /// than the size provided.
-    pub fn read_bytes(&self, len: usize) -> std::io::Result<&'a [u8]> {
+    pub fn read_bytes(&mut self, len: usize) -> std::io::Result<&'a [u8]> {
         self.check_available(len)?;
         Ok(self.advance(len))
     }
@@ -85,25 +84,25 @@ impl<'a> BufferReader<'a> {
     }
     /// Returns the length of the remaining buffer.
     pub fn len(&self) -> usize {
-        self.buffer.get().len()
+        self.buffer.len()
     }
     /// Returns the length of the remaining buffer.
     pub fn is_empty(&self) -> bool {
-        self.buffer.get().is_empty()
+        self.buffer.is_empty()
     }
     /// Returns a reference to the remaining bytes in the slice.
     #[inline(always)]
     pub fn peek_remaining(&self) -> &'a [u8] {
-        self.buffer.get()
+        self.buffer
     }
     /// Returns a reference to the remaining bytes in the slice.
     #[inline(always)]
     pub fn get_remaining(self) -> &'a [u8] {
-        self.buffer.get()
+        self.buffer
     }
     /// Returns the position of the pattern of bytes provided, or `None` if the pattern is not found.
     pub fn find_bytes(&self, pat: &[u8]) -> Option<usize> {
-        let buffer = self.buffer.get();
+        let buffer = self.buffer;
         let pat_len = pat.len();
         let mut i = 0;
 
@@ -125,14 +124,14 @@ impl<'a> BufferReader<'a> {
     /// Caller should call `self.check_available(size)` before calling this to check if there is room
     /// in the buffer to advance.
     #[inline(always)]
-    fn advance(&self, len: usize) -> &'a [u8] {
-        let buffer = self.buffer.get();
-        self.buffer.set(&buffer[len..]);
+    fn advance(&mut self, len: usize) -> &'a [u8] {
+        let buffer = self.buffer;
+        self.buffer = &buffer[len..];
         &buffer[..len]
     }
     /// Checks if there are enough bytes left in the buffer.
     fn check_available(&self, len: usize) -> std::io::Result<()> {
-        if len > self.buffer.get().len() {
+        if len > self.buffer.len() {
             return Err(Error::new(
                 ErrorKind::UnexpectedEof,
                 "BufferReader advance would result in an index that is out of bounds",
@@ -142,6 +141,9 @@ impl<'a> BufferReader<'a> {
         Ok(())
     }
 }
+
+#[cfg(feature = "read")]
+use std::io::Read;
 #[cfg(feature = "read")]
 impl Read for BufferReader<'_> {
     /// # Warning - will copy bytes to provided buffer
@@ -268,7 +270,7 @@ mod tests {
     #[test]
     fn read_bytes() {
         let hello_world = b"Hello, World!";
-        let br = BufferReader::new(hello_world);
+        let mut  br = BufferReader::new(hello_world);
 
         let hello = br.read_bytes(5).unwrap();
         assert_eq!(&hello[..], b"Hello");
@@ -304,7 +306,7 @@ mod tests {
     #[test]
     fn read_t() {
         let hello_world = b"Hello, World!";
-        let br = BufferReader::new(hello_world);
+        let mut br = BufferReader::new(hello_world);
         let test_t = br.read_t::<TestT>().unwrap();
         let int = test_t.int_one;
         assert_eq!(int, u32::from_le_bytes(*b"Hell"));
@@ -325,7 +327,7 @@ mod tests {
     #[test]
     fn read_byte() {
         let hello_world = b"Hello, World!";
-        let br = BufferReader::new(hello_world);
+        let mut br = BufferReader::new(hello_world);
         let first_byte = br.read_byte().unwrap();
 
         assert_eq!(first_byte, b'H');
