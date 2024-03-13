@@ -53,16 +53,18 @@ impl<'a> BufferReader<'a> {
         // SAFETY: See read_t
         Ok(unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const T, len) })
     }
-    /// Returns the value next byte and advances the slice by one. Function will fail if the length
-    /// of the underlying slice is less than 1.
+    /// Returns the value of the next byte and advances the slice by one. Function will fail if the
+    /// length of the underlying slice is less than 1.
+    /// If you want a reference to the byte, use `read_t`
     pub fn read_byte(&mut self) -> std::io::Result<u8> {
         self.check_available(std::mem::size_of::<u8>())?;
         // SAFETY: advance returns a slice with the number of bytes we read, so, we return the only
         // byte in the slice.
         Ok(self.advance(std::mem::size_of::<u8>())[0])
     }
-    /// Returns the value next byte. Function will fail if the length of the underlying slice is less
-    /// than 1.
+    /// Returns the value of the next byte. Function will fail if the length of the underlying slice
+    /// is less than 1.
+    /// If you want a reference to the byte, use `peek_t`
     pub fn peek_byte(&self, pos: usize) -> std::io::Result<u8> {
         self.check_available(std::mem::size_of::<u8>())?;
         // SAFETY: see read_byte
