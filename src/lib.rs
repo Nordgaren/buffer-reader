@@ -8,6 +8,7 @@ pub struct BufferReader<'a> {
 
 impl<'a> BufferReader<'a> {
     /// Returns a new `BufferReader<'a>` for the provided slice.
+    #[inline(always)]
     pub fn new(slice: &'a [u8]) -> Self {
         BufferReader {
             buffer: slice,
@@ -85,10 +86,13 @@ impl<'a> BufferReader<'a> {
         Ok(&self.peek_remaining()[start..end])
     }
     /// Returns the length of the remaining buffer.
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.buffer.len()
     }
     /// Returns the length of the remaining buffer.
+    /// Returns true of the inner buffer is empty.
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
     }
@@ -106,8 +110,8 @@ impl<'a> BufferReader<'a> {
     pub fn find_bytes(&self, pat: &[u8]) -> Option<usize> {
         let buffer = self.buffer;
         let pat_len = pat.len();
-        let mut i = 0;
 
+        let mut i = 0;
         while i < buffer.len() - (pat_len - 1) {
             if &buffer[i..pat_len + i] == pat {
                 return Some(i);
