@@ -90,7 +90,6 @@ impl<'a> BufferReader<'a> {
     pub fn len(&self) -> usize {
         self.buffer.len()
     }
-    /// Returns the length of the remaining buffer.
     /// Returns true of the inner buffer is empty.
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
