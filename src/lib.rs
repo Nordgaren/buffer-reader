@@ -1,5 +1,5 @@
-use std::io::{Error, ErrorKind};
 use bytemuck::AnyBitPattern;
+use std::io::{Error, ErrorKind};
 
 /// A structure used for getting references to C structures in a contiguous buffer of memory.
 pub struct BufferReader<'a> {
@@ -10,9 +10,7 @@ impl<'a> BufferReader<'a> {
     /// Returns a new `BufferReader<'a>` for the provided slice.
     #[inline(always)]
     pub fn new(slice: &'a [u8]) -> Self {
-        BufferReader {
-            buffer: slice,
-        }
+        BufferReader { buffer: slice }
     }
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
     /// advances the slice by the size of `T` in bytes. Function will fail if the length of the underlying
@@ -24,7 +22,8 @@ impl<'a> BufferReader<'a> {
         // SAFETY: We know that the buffer passed back from `self.advance(size)?` is the size of T,
         // so we will assume that it's a valid T. This function is now considered safe, since we are
         // now requiring bytemuck and the `AnyBitPattern` trait.
-        Ok(unsafe { &*(slice.as_ptr() as *const T) })
+        bytemuck::try_from_bytes(slice)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
     }
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`, Where n is the
     /// size of `T`. Function will fail if there are not enough bytes left in the buffer.
@@ -33,7 +32,8 @@ impl<'a> BufferReader<'a> {
         self.check_available(end)?;
         let slice = &self.peek_remaining()[start..end];
         // SAFETY: See read_t
-        Ok(unsafe { &*(slice.as_ptr() as *const T) })
+        bytemuck::try_from_bytes(slice)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
     }
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`. and then
     /// advances the slice by the size of `T` * `len` in bytes. Function will fail if the length of
@@ -43,16 +43,22 @@ impl<'a> BufferReader<'a> {
         self.check_available(size)?;
         let slice = self.advance(size);
         // SAFETY: See read_t
-        Ok(unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const T, len) })
+        bytemuck::try_cast_slice(slice)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
     }
     /// Returns a reference to the next `n` bytes in the slice as a reference to `T`, Where `n` is the
     /// size of `T` * `len`. Function will fail if there are not enough bytes left in the buffer.
-    pub fn peek_slice_t<T: AnyBitPattern>(&self, start: usize, len: usize) -> std::io::Result<&'a [T]> {
+    pub fn peek_slice_t<T: AnyBitPattern>(
+        &self,
+        start: usize,
+        len: usize,
+    ) -> std::io::Result<&'a [T]> {
         let end = start + (std::mem::size_of::<T>() * len);
         self.check_available(end)?;
         let slice = &self.peek_remaining()[start..end];
         // SAFETY: See read_t
-        Ok(unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const T, len) })
+        bytemuck::try_cast_slice(slice)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))
     }
     /// Returns the value of the next byte and advances the slice by one. Function will fail if the
     /// length of the underlying slice is less than 1.
@@ -67,7 +73,7 @@ impl<'a> BufferReader<'a> {
     /// is less than 1.
     /// If you want a reference to the byte, use `peek_t`
     pub fn peek_byte(&self, pos: usize) -> std::io::Result<u8> {
-        self.check_available(std::mem::size_of::<u8>())?;
+        self.check_available(pos)?;
         // SAFETY: see read_byte
         Ok(self.peek_remaining()[pos])
     }
@@ -136,7 +142,7 @@ impl<'a> BufferReader<'a> {
     }
     /// Checks if there are enough bytes left in the buffer.
     fn check_available(&self, len: usize) -> std::io::Result<()> {
-        if len > self.buffer.len() {
+        if len >= self.buffer.len() {
             return Err(Error::new(
                 ErrorKind::UnexpectedEof,
                 "BufferReader advance would result in an index that is out of bounds",
@@ -275,7 +281,7 @@ mod tests {
     #[test]
     fn read_bytes() {
         let hello_world = b"Hello, World!";
-        let mut  br = BufferReader::new(hello_world);
+        let mut br = BufferReader::new(hello_world);
 
         let hello = br.read_bytes(5).unwrap();
         assert_eq!(&hello[..], b"Hello");
@@ -291,10 +297,10 @@ mod tests {
         let hello_world = b"Hello, World!";
         let br = BufferReader::new(hello_world);
         let len = br.len();
-        let hello = std::str::from_utf8(br.peek_bytes(5, 2).unwrap()).unwrap();
+        let after_hello = std::str::from_utf8(br.peek_bytes(5, 2).unwrap()).unwrap();
 
         assert_eq!(len, br.len());
-        assert_eq!(hello, ", ");
+        assert_eq!(after_hello, ", ");
     }
 
     /// A test type to make sure read_t and peek_t work.
@@ -345,6 +351,14 @@ mod tests {
         let seventh_byte = br.peek_byte(7).unwrap();
 
         assert_eq!(seventh_byte, b'W');
+    }
+
+    #[test]
+    #[should_panic]
+    fn peek_byte_fail() {
+        let hello_world = b"Hello, World!";
+        let br = BufferReader::new(hello_world);
+        let _ = br.peek_byte(hello_world.len()).unwrap();
     }
 
     #[test]
